@@ -32,6 +32,7 @@ export declare class Chain {
     }>;
     private executeStep;
     private interpolate;
+    private resolvePath;
     private normalizeSteps;
     private resolveExecutionOrder;
 }

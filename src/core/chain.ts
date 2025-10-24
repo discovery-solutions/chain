@@ -7,8 +7,8 @@ interface Step {
   model?: LanguageModel
   prompt: string
   output?: string
-  schema?: z.ZodType<any> // Se tiver schema, usa generateObject
-  after?: string | string[]
+  schema?: z.ZodType<any>
+  after?: string | string[] // Dependencies
 }
 
 interface ChainConfig {
@@ -35,10 +35,13 @@ export class Chain {
     this.state.set("input", input)
 
     const steps = this.normalizeSteps(this.config.steps)
-    const executionOrder = this.resolveExecutionOrder(steps)
+    const executionBatches = this.resolveExecutionOrder(steps)
 
-    for (const step of executionOrder) {
-      await this.executeStep(step)
+    // Executa cada batch em paralelo
+    for (const batch of executionBatches) {
+      await Promise.all(
+        batch.map(step => this.executeStep(step))
+      )
     }
 
     return {
@@ -62,7 +65,6 @@ export class Chain {
 
     // Se tem schema, usa generateObject
     if (step.schema) {
-      console.log(`Retorne **somente JSON válido**, sem texto explicativo. Siga exatamente o schema abaixo, incluindo todos os campos obrigatórios. ${prompt}`);
       const { object, usage } = await generateObject({
         schema: step.schema,
         output: "object",
@@ -77,7 +79,7 @@ export class Chain {
         completionTokens: usage.outputTokens as number
       })
     }
-    // Senão, usa generateText (comportamento original)
+    // Senão, usa generateText
     else {
       if (this.config.streaming) {
         const { textStream } = await streamText({ model, prompt })
@@ -146,11 +148,46 @@ export class Chain {
     })
   }
 
-  private resolveExecutionOrder(steps: Step[]): Step[] {
+  private resolveExecutionOrder(steps: Step[]): Step[][] {
+    // Se nenhum step tem dependencies, roda tudo sequencial (backward compatibility)
     const hasAfter = steps.some(s => s.after)
-    if (!hasAfter) return steps
+    if (!hasAfter) {
+      return steps.map(s => [s]) // Um step por batch (sequencial)
+    }
 
-    // TODO: Topological sort real
-    return steps
+    // Topological sort com batching paralelo
+    const stepsById = new Map(steps.map(s => [s.id!, s]))
+    const completed = new Set<string>()
+    const batches: Step[][] = []
+
+    while (completed.size < steps.length) {
+      // Encontra steps que podem rodar agora (deps satisfeitas)
+      const readySteps = steps.filter(step => {
+        if (completed.has(step.id!)) return false
+
+        const deps = Array.isArray(step.after)
+          ? step.after
+          : step.after
+            ? [step.after]
+            : []
+
+        return deps.every(dep => completed.has(dep))
+      })
+
+      if (readySteps.length === 0) {
+        // Ciclo detectado ou erro
+        const remaining = steps.filter(s => !completed.has(s.id!))
+        throw new Error(
+          `Circular dependency or missing dependency detected. ` +
+          `Remaining steps: ${remaining.map(s => s.id).join(', ')}`
+        )
+      }
+
+      // Adiciona batch e marca como completos
+      batches.push(readySteps)
+      readySteps.forEach(s => completed.add(s.id!))
+    }
+
+    return batches
   }
 }

@@ -14,9 +14,10 @@ class Chain {
     async run(input) {
         this.state.set("input", input);
         const steps = this.normalizeSteps(this.config.steps);
-        const executionOrder = this.resolveExecutionOrder(steps);
-        for (const step of executionOrder) {
-            await this.executeStep(step);
+        const executionBatches = this.resolveExecutionOrder(steps);
+        // Executa cada batch em paralelo
+        for (const batch of executionBatches) {
+            await Promise.all(batch.map(step => this.executeStep(step)));
         }
         return {
             output: this.state.get("output") || this.state.getLastOutput(),
@@ -35,7 +36,6 @@ class Chain {
         const outputKey = step.output || `step${this.state.getStepCount()}`;
         // Se tem schema, usa generateObject
         if (step.schema) {
-            console.log(`Retorne **somente JSON válido**, sem texto explicativo. Siga exatamente o schema abaixo, incluindo todos os campos obrigatórios. ${prompt}`);
             const { object, usage } = await (0, ai_1.generateObject)({
                 schema: step.schema,
                 output: "object",
@@ -49,7 +49,7 @@ class Chain {
                 completionTokens: usage.outputTokens
             });
         }
-        // Senão, usa generateText (comportamento original)
+        // Senão, usa generateText
         else {
             if (this.config.streaming) {
                 const { textStream } = await (0, ai_1.streamText)({ model, prompt });
@@ -72,14 +72,26 @@ class Chain {
         this.state.addDuration(Date.now() - startTime);
     }
     interpolate(prompt) {
-        return prompt.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-            const value = this.state.get(key);
-            // Se for objeto, stringify
+        return prompt.replace(/\{\{([\w.]+)\}\}/g, (_, path) => {
+            const value = this.resolvePath(path);
             if (typeof value === "object" && value !== null) {
                 return JSON.stringify(value, null, 2);
             }
-            return value || `{{${key}}}`;
+            return value ?? `{{${path}}}`;
         });
+    }
+    resolvePath(path) {
+        const keys = path.split(".");
+        let value = this.state.get(keys.shift());
+        for (const key of keys) {
+            if (value && typeof value === "object" && key in value) {
+                value = value[key];
+            }
+            else {
+                return undefined;
+            }
+        }
+        return value;
     }
     normalizeSteps(steps) {
         return steps.map((step, index) => {
@@ -97,11 +109,38 @@ class Chain {
         });
     }
     resolveExecutionOrder(steps) {
+        // Se nenhum step tem dependencies, roda tudo sequencial (backward compatibility)
         const hasAfter = steps.some(s => s.after);
-        if (!hasAfter)
-            return steps;
-        // TODO: Topological sort real
-        return steps;
+        if (!hasAfter) {
+            return steps.map(s => [s]); // Um step por batch (sequencial)
+        }
+        // Topological sort com batching paralelo
+        const stepsById = new Map(steps.map(s => [s.id, s]));
+        const completed = new Set();
+        const batches = [];
+        while (completed.size < steps.length) {
+            // Encontra steps que podem rodar agora (deps satisfeitas)
+            const readySteps = steps.filter(step => {
+                if (completed.has(step.id))
+                    return false;
+                const deps = Array.isArray(step.after)
+                    ? step.after
+                    : step.after
+                        ? [step.after]
+                        : [];
+                return deps.every(dep => completed.has(dep));
+            });
+            if (readySteps.length === 0) {
+                // Ciclo detectado ou erro
+                const remaining = steps.filter(s => !completed.has(s.id));
+                throw new Error(`Circular dependency or missing dependency detected. ` +
+                    `Remaining steps: ${remaining.map(s => s.id).join(', ')}`);
+            }
+            // Adiciona batch e marca como completos
+            batches.push(readySteps);
+            readySteps.forEach(s => completed.add(s.id));
+        }
+        return batches;
     }
 }
 exports.Chain = Chain;

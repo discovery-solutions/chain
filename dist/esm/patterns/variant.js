@@ -52,7 +52,9 @@ Return evaluation for each variant.`,
                         variant: z.string(),
                         score: z.number().min(0).max(100),
                         reasoning: z.string()
-                    })).length(initialCount)
+                    }))
+                        .min(initialCount - 2) // ← Flexível: aceita 8-12 se pediu 10
+                        .max(initialCount + 2)
                 }),
                 output: "evaluated"
             },

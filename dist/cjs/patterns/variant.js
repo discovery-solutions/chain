@@ -55,7 +55,9 @@ Return evaluation for each variant.`,
                         variant: zod_1.z.string(),
                         score: zod_1.z.number().min(0).max(100),
                         reasoning: zod_1.z.string()
-                    })).length(initialCount)
+                    }))
+                        .min(initialCount - 2) // ← Flexível: aceita 8-12 se pediu 10
+                        .max(initialCount + 2)
                 }),
                 output: "evaluated"
             },
