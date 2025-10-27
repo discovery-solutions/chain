@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Chain = void 0;
 const ai_1 = require("ai");
 const state_js_1 = require("./state.js");
+const zod_1 = require("zod");
 class Chain {
     constructor(config) {
         this.config = config;
@@ -37,13 +38,13 @@ class Chain {
         // Se tem schema, usa generateObject
         if (step.schema) {
             const { object, usage } = await (0, ai_1.generateObject)({
-                schema: step.schema,
+                schema: zod_1.z.object({ result: step.schema }),
                 output: "object",
                 mode: "json",
                 prompt: `Retorne **somente JSON válido**, sem texto explicativo. Siga exatamente o schema abaixo, incluindo todos os campos obrigatórios. ${prompt}`,
                 model,
             });
-            this.state.set(outputKey, object);
+            this.state.set(outputKey, object.result);
             this.state.addCost({
                 promptTokens: usage.inputTokens,
                 completionTokens: usage.outputTokens

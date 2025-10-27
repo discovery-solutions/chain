@@ -1,5 +1,6 @@
 import { generateText, streamText, generateObject } from "ai";
 import { StateManager } from "./state.js";
+import { z } from "zod";
 export class Chain {
     constructor(config) {
         this.config = config;
@@ -34,13 +35,13 @@ export class Chain {
         // Se tem schema, usa generateObject
         if (step.schema) {
             const { object, usage } = await generateObject({
-                schema: step.schema,
+                schema: z.object({ result: step.schema }),
                 output: "object",
                 mode: "json",
                 prompt: `Retorne **somente JSON válido**, sem texto explicativo. Siga exatamente o schema abaixo, incluindo todos os campos obrigatórios. ${prompt}`,
                 model,
             });
-            this.state.set(outputKey, object);
+            this.state.set(outputKey, object.result);
             this.state.addCost({
                 promptTokens: usage.inputTokens,
                 completionTokens: usage.outputTokens
