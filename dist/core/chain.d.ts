@@ -1,6 +1,6 @@
 import { LanguageModel } from "ai";
 import { z } from "zod";
-interface Step {
+export interface Step {
     id?: string;
     model?: LanguageModel;
     prompt: string;
@@ -8,7 +8,7 @@ interface Step {
     schema?: z.ZodType<any>;
     after?: string | string[];
 }
-interface ChainConfig {
+export interface ChainConfig {
     model?: LanguageModel;
     steps: (Step | string)[];
     streaming?: boolean;
@@ -36,4 +36,3 @@ export declare class Chain {
     private normalizeSteps;
     private resolveExecutionOrder;
 }
-export {};

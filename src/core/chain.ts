@@ -2,7 +2,7 @@ import { generateText, streamText, generateObject, LanguageModel } from "ai"
 import { StateManager } from "./state.js"
 import { z } from "zod"
 
-interface Step {
+export interface Step {
   id?: string
   model?: LanguageModel
   prompt: string
@@ -11,7 +11,7 @@ interface Step {
   after?: string | string[] // Dependencies
 }
 
-interface ChainConfig {
+export interface ChainConfig {
   model?: LanguageModel
   steps: (Step | string)[]
   streaming?: boolean
