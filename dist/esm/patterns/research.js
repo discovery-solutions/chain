@@ -2,7 +2,7 @@ import { Chain } from "../core/chain.js";
 export async function researchSynthesis(config) {
     const steps = [];
     // Step por aspecto
-    config.aspects.forEach((aspect, i) => {
+    config.aspects.forEach(aspect => {
         steps.push({
             id: `analyze-${aspect}`,
             prompt: `Analyze the ${aspect} aspect of this:
@@ -10,7 +10,8 @@ export async function researchSynthesis(config) {
 ${config.input}
 
 Provide detailed analysis focusing specifically on ${aspect}.`,
-            output: aspect
+            output: aspect,
+            after: []
         });
     });
     // Synthesis step
@@ -23,7 +24,8 @@ ${aspectsContext}
 
 Create a unified, structured analysis.`,
         schema: config.synthesisSchema,
-        output: "synthesis"
+        output: "synthesis",
+        after: config.aspects.map(aspect => `analyze-${aspect}`)
     });
     const chain = Chain.create({
         model: config.model,

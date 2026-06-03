@@ -8,7 +8,7 @@ export interface Step {
   prompt: string
   output?: string
   schema?: z.ZodType<any>
-  after?: string | string[] // Dependencies
+  after?: string | string[]
 }
 
 export interface ChainConfig {
@@ -149,43 +149,54 @@ export class Chain {
   }
 
   private resolveExecutionOrder(steps: Step[]): Step[][] {
-    // Se nenhum step tem dependencies, roda tudo sequencial (backward compatibility)
-    const hasAfter = steps.some(s => s.after)
-    if (!hasAfter) {
-      return steps.map(s => [s]) // Um step por batch (sequencial)
+    const dependenciesByStep = new Map<string, string[]>()
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i]
+      const currentStepId = step.id!
+      let dependencies: string[]
+
+      if (step.after !== undefined) {
+        dependencies = Array.isArray(step.after) ? step.after : [step.after]
+      } else if (i === 0) {
+        dependencies = []
+      } else {
+        dependencies = [steps[i - 1].id!]
+      }
+
+      dependenciesByStep.set(currentStepId, dependencies)
     }
 
-    // Topological sort com batching paralelo
-    const stepsById = new Map(steps.map(s => [s.id!, s]))
+    for (const [stepId, dependencies] of dependenciesByStep.entries()) {
+      for (const dependencyId of dependencies) {
+        if (!dependenciesByStep.has(dependencyId)) {
+          throw new Error(`Step \"${stepId}\" depends on unknown step \"${dependencyId}\"`)
+        }
+      }
+    }
+
     const completed = new Set<string>()
     const batches: Step[][] = []
 
     while (completed.size < steps.length) {
-      // Encontra steps que podem rodar agora (deps satisfeitas)
       const readySteps = steps.filter(step => {
-        if (completed.has(step.id!)) return false
+        if (completed.has(step.id!)) {
+          return false
+        }
 
-        const deps = Array.isArray(step.after)
-          ? step.after
-          : step.after
-            ? [step.after]
-            : []
-
-        return deps.every(dep => completed.has(dep))
+        const dependencies = dependenciesByStep.get(step.id!) || []
+        return dependencies.every(dependencyId => completed.has(dependencyId))
       })
 
       if (readySteps.length === 0) {
-        // Ciclo detectado ou erro
-        const remaining = steps.filter(s => !completed.has(s.id!))
+        const remaining = steps.filter(step => !completed.has(step.id!))
         throw new Error(
-          `Circular dependency or missing dependency detected. ` +
-          `Remaining steps: ${remaining.map(s => s.id).join(', ')}`
+          `Circular dependency detected. Remaining steps: ${remaining.map(step => step.id).join(", ")}`
         )
       }
 
-      // Adiciona batch e marca como completos
       batches.push(readySteps)
-      readySteps.forEach(s => completed.add(s.id!))
+      readySteps.forEach(step => completed.add(step.id!))
     }
 
     return batches
