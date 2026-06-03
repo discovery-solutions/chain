@@ -26,11 +26,7 @@
             "types": "./dist/esm/client/index.d.ts"
         }
     },
-    "peerDependencies": {
-        "ai": "^5.0.76"
-    },
     "devDependencies": {
-        "@ai-sdk/openai": "^2.0.53",
         "@types/node": "^20",
         "dotenv": "^17.2.3",
         "eslint": "^9",
@@ -52,5 +48,9 @@
     "files": [
         "dist",
         "src"
-    ]
+    ],
+    "dependencies": {
+        "@ai-sdk/openai": "^3.0.67",
+        "ai": "^6.0.195"
+    }
 }
