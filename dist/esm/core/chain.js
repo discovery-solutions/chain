@@ -1,6 +1,5 @@
-import { generateText, streamText, generateObject } from "ai";
+import { generateText, streamText, Output } from "ai";
 import { StateManager } from "./state.js";
-import { z } from "zod";
 export class Chain {
     constructor(config) {
         this.config = config;
@@ -13,7 +12,6 @@ export class Chain {
         this.state.set("input", input);
         const steps = this.normalizeSteps(this.config.steps);
         const executionBatches = this.resolveExecutionOrder(steps);
-        // Executa cada batch em paralelo
         for (const batch of executionBatches) {
             await Promise.all(batch.map(step => this.executeStep(step)));
         }
@@ -21,7 +19,7 @@ export class Chain {
             output: this.state.get("output") || this.state.getLastOutput(),
             state: this.state.getAll(),
             cost: this.state.getCost(),
-            duration: this.state.getDuration()
+            duration: this.state.getDuration(),
         };
     }
     async executeStep(step) {
@@ -29,43 +27,45 @@ export class Chain {
         const prompt = this.interpolate(step.prompt);
         const model = step.model || this.config.model;
         if (!model) {
-            throw new Error(`No model specified for step ${step.id}`);
+            throw new Error(`No model specified for step "${step.id}"`);
         }
         const outputKey = step.output || `step${this.state.getStepCount()}`;
-        // Se tem schema, usa generateObject
         if (step.schema) {
-            const { object, usage } = await generateObject({
-                schema: z.object({ result: step.schema }),
-                output: "object",
-                mode: "json",
-                prompt: `Retorne **somente JSON válido**, sem texto explicativo. Siga exatamente o schema abaixo, incluindo todos os campos obrigatórios. ${prompt}`,
+            // generateObject is deprecated in AI SDK v5+ in favour of
+            // generateText + Output.object(). Import Output from "ai".
+            const { output, usage } = await generateText({
                 model,
+                prompt,
+                output: Output.object({ schema: step.schema }),
             });
-            this.state.set(outputKey, object.result);
+            this.state.set(outputKey, output);
             this.state.addCost({
-                promptTokens: usage.inputTokens,
-                completionTokens: usage.outputTokens
+                promptTokens: usage.inputTokens ?? 0,
+                completionTokens: usage.outputTokens ?? 0,
             });
         }
-        // Senão, usa generateText
+        else if (this.config.streaming) {
+            const { textStream, usage: usagePromise } = streamText({ model, prompt });
+            let fullText = "";
+            for await (const chunk of textStream) {
+                fullText += chunk;
+                this.config.onStream?.(chunk, step.id ?? "unknown");
+            }
+            // usage resolves after the stream is fully consumed
+            const usage = await usagePromise;
+            this.state.set(outputKey, fullText);
+            this.state.addCost({
+                promptTokens: usage.inputTokens ?? 0,
+                completionTokens: usage.outputTokens ?? 0,
+            });
+        }
         else {
-            if (this.config.streaming) {
-                const { textStream } = await streamText({ model, prompt });
-                let fullText = "";
-                for await (const chunk of textStream) {
-                    fullText += chunk;
-                    this.config.onStream?.(chunk, step.id || "unknown");
-                }
-                this.state.set(outputKey, fullText);
-            }
-            else {
-                const { text, usage } = await generateText({ model, prompt });
-                this.state.set(outputKey, text);
-                this.state.addCost({
-                    promptTokens: usage.inputTokens,
-                    completionTokens: usage.outputTokens
-                });
-            }
+            const { text, usage } = await generateText({ model, prompt });
+            this.state.set(outputKey, text);
+            this.state.addCost({
+                promptTokens: usage.inputTokens ?? 0,
+                completionTokens: usage.outputTokens ?? 0,
+            });
         }
         this.state.addDuration(Date.now() - startTime);
     }
@@ -97,12 +97,12 @@ export class Chain {
                 return {
                     id: `step${index + 1}`,
                     prompt: step,
-                    output: `step${index + 1}`
+                    output: `step${index + 1}`,
                 };
             }
             return {
                 id: step.id || `step${index + 1}`,
-                ...step
+                ...step,
             };
         });
     }
@@ -126,7 +126,7 @@ export class Chain {
         for (const [stepId, dependencies] of dependenciesByStep.entries()) {
             for (const dependencyId of dependencies) {
                 if (!dependenciesByStep.has(dependencyId)) {
-                    throw new Error(`Step \"${stepId}\" depends on unknown step \"${dependencyId}\"`);
+                    throw new Error(`Step "${stepId}" depends on unknown step "${dependencyId}"`);
                 }
             }
         }
@@ -134,15 +134,17 @@ export class Chain {
         const batches = [];
         while (completed.size < steps.length) {
             const readySteps = steps.filter(step => {
-                if (completed.has(step.id)) {
+                if (completed.has(step.id))
                     return false;
-                }
-                const dependencies = dependenciesByStep.get(step.id) || [];
-                return dependencies.every(dependencyId => completed.has(dependencyId));
+                const dependencies = dependenciesByStep.get(step.id) ?? [];
+                return dependencies.every(dep => completed.has(dep));
             });
             if (readySteps.length === 0) {
-                const remaining = steps.filter(step => !completed.has(step.id));
-                throw new Error(`Circular dependency detected. Remaining steps: ${remaining.map(step => step.id).join(", ")}`);
+                const remaining = steps
+                    .filter(step => !completed.has(step.id))
+                    .map(step => step.id)
+                    .join(", ");
+                throw new Error(`Circular dependency detected. Remaining steps: ${remaining}`);
             }
             batches.push(readySteps);
             readySteps.forEach(step => completed.add(step.id));
